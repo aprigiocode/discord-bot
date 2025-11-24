@@ -8,6 +8,8 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
+tree = bot.tree
+
 
 # Armazenamento de eventos
 eventos = {}
@@ -242,4 +244,5 @@ async def on_ready():
     print(f"Bot conectado como {bot.user}")
 
 bot.run(os.environ['DISCORD_TOKEN'])
+
 
