@@ -232,10 +232,10 @@ async def acao(interaction: discord.Interaction):
     await interaction.response.send_modal(modal)
 
 
-@bot.event
-async def on_ready():
-    await tree.sync(guild=discord.Object(id=GUILD_ID))
-    print(f"Bot conectado como {bot.user}")
+# @bot.event
+# async def on_ready():
+#     await tree.sync(guild=discord.Object(id=GUILD_ID))
+#     print(f"Bot conectado como {bot.user}")
 
 # Inicialização
 @bot.event
@@ -244,5 +244,6 @@ async def on_ready():
     print(f"Bot conectado como {bot.user}")
 
 bot.run(os.environ['DISCORD_TOKEN'])
+
 
 
