@@ -10,13 +10,10 @@ intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 tree = bot.tree
 
-
 # Armazenamento de eventos
 eventos = {}
 
 # Modal para criar nova ação
-
-
 class CriarAcaoModal(Modal):
     def __init__(self, author):
         super().__init__(title="Criar Nova Ação")
@@ -65,8 +62,6 @@ class CriarAcaoModal(Modal):
         await interaction.response.send_message(embed=embed, view=view)
 
 # Gera embed estilo painel de presença
-
-
 async def gerar_embed(evento_id):
     evento = eventos[evento_id]
 
@@ -89,6 +84,7 @@ async def gerar_embed(evento_id):
         color=cor_embed
     )
 
+    # Tenta buscar o avatar do autor
     autor = bot.get_user(evento['autor_id'])
     if autor:
         embed.set_thumbnail(url=autor.display_avatar.url)
@@ -100,10 +96,8 @@ async def gerar_embed(evento_id):
     embed.add_field(name="📝 Responsável",
                     value=f"{evento['autor_name']}", inline=False)
 
-    # Mini-avatar display, máximo 20 participantes visíveis
     def formatar_lista(usuarios, emoji):
-        lista = " ".join(
-            [f"{emoji}[{u.display_name}]({u.display_avatar.url})" for u in usuarios[:20]])
+        lista = " ".join([f"{emoji}{u.display_name}" for u in usuarios[:20]])
         if len(usuarios) > 20:
             lista += f" +{len(usuarios)-20}..."
         return lista or "Nenhum"
@@ -116,8 +110,6 @@ async def gerar_embed(evento_id):
     return embed
 
 # View com botões funcionais
-
-
 class AcaoView(View):
     def __init__(self, evento_id):
         super().__init__(timeout=None)
@@ -174,7 +166,6 @@ class AcaoView(View):
         evento['participantes'] = [
             u for u in evento['participantes'] if u.id != usuario.id]
 
-        # Promove primeiro da reserva
         if evento['reservas']:
             novo_participante = evento['reservas'].pop(0)
             evento['participantes'].append(novo_participante)
@@ -210,10 +201,8 @@ class AcaoView(View):
             return
 
         evento['finalizado'] = True
-        self.participar_button.disabled = True
-        self.sair_button.disabled = True
-        self.reservar_button.disabled = True
-        self.finalizar_button.disabled = True
+        for item in self.children:
+            item.disabled = True
 
         embed = await gerar_embed(self.evento_id)
         embed.description += "\n\n⛔ Ação finalizada pelo organizador."
@@ -223,28 +212,18 @@ class AcaoView(View):
         embed = await gerar_embed(self.evento_id)
         await interaction.response.edit_message(embed=embed, view=self)
 
-# Slash command para criar ação
-
-
+# Slash command GLOBAL
 @tree.command(name="acao", description="Cria uma nova ação")
 async def acao(interaction: discord.Interaction):
     modal = CriarAcaoModal(author=interaction.user)
     await interaction.response.send_modal(modal)
 
-
 @bot.event
 async def on_ready():
-    await tree.sync(guild=discord.Object)
-    print(f"Bot conectado como {bot.user}")
-
-# Inicialização
-@bot.event
-async def on_ready():
+    # Sincroniza os comandos globalmente
     await bot.tree.sync()
     print(f"Bot conectado como {bot.user}")
+    print("Comandos sincronizados globalmente!")
 
+# Inicialização
 bot.run(os.environ['DISCORD_TOKEN'])
-
-
-
-
