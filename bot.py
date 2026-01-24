@@ -1,229 +1,106 @@
 import discord
-from discord.ext import commands
-from discord.ui import Button, View, Modal, TextInput
-import os
+import subprocess
+import re
+import asyncio
+import io
 
+# Define os intents do bot
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
 
-bot = commands.Bot(command_prefix="/", intents=intents)
-tree = bot.tree
+class MyBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=intents)
+        self.tree = discord.app_commands.CommandTree(self)
+        self.is_processing = False
 
-# Armazenamento de eventos
-eventos = {}
+    async def setup_hook(self):
+        await self.tree.sync()
 
-# Modal para criar nova ação
-class CriarAcaoModal(Modal):
-    def __init__(self, author):
-        super().__init__(title="Criar Nova Ação")
-        self.author = author
+bot = MyBot()
 
-        self.nome = TextInput(
-            label="Nome da Ação", placeholder="Digite o nome da ação", required=True)
-        self.add_item(self.nome)
+# Comando de ajuda
+@bot.tree.command(name="ajuda", description="Mostra as instruções de uso do bot")
+async def ajuda(interaction: discord.Interaction):
+    help_text = """
+    **📘 Bot Emailfinder By OSINTMILGRAU - Help**
 
-        self.data = TextInput(label="Data da Ação",
-                              placeholder="Ex: 23/11/2025", required=True)
-        self.add_item(self.data)
+    **Comandos disponíveis:**
 
-        self.hora = TextInput(label="Hora da Ação",
-                              placeholder="Ex: 14:00", required=True)
-        self.add_item(self.hora)
+    1. **`/emailfinder [domínio]`**
+       - **Descrição**: Realiza uma busca de emails associados ao domínio fornecido.
+       - **Exemplo**: `/emailfinder exemple.com`
 
-        self.quantidade = TextInput(
-            label="Número de Participantes", placeholder="Ex: 10", required=True)
-        self.add_item(self.quantidade)
+    **Observações importantes:**
+    - Caso o número de emails encontrados seja muito grande, eles serão enviados como um arquivo para evitar problemas de limite de caracteres.
+    - O bot pode demorar alguns segundos para processar a busca, dependendo do tamanho do domínio e da quantidade de emails encontrados.
+    """
+    await interaction.response.send_message(help_text, ephemeral=True)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            quantidade_int = int(self.quantidade.value)
-            if quantidade_int <= 0:
-                raise ValueError
-        except ValueError:
-            await interaction.response.send_message("Quantidade inválida! Use apenas números maiores que 0.", ephemeral=True)
-            return
+# Função para filtrar os emails indesejados
+def filter_emails(email_list):
+    return [email for email in email_list if not (email.startswith('u0027@') or email.startswith('22@'))]
 
-        evento_id = len(eventos) + 1
-        eventos[evento_id] = {
-            "nome": self.nome.value,
-            "data": self.data.value,
-            "hora": self.hora.value,
-            "quantidade": quantidade_int,
-            "participantes": [],
-            "reservas": [],
-            "autor_id": interaction.user.id,
-            "autor_name": interaction.user.display_name,
-            "finalizado": False
-        }
+async def loading_bar(interaction):
+    stages = [
+        "🔄 Buscando emails [▒▒▒▒▒▒▒▒▒▒] 0%",
+        "🔄 Buscando emails [█▒▒▒▒▒▒▒▒▒] 10%",
+        "🔄 Buscando emails [██▒▒▒▒▒▒▒▒] 20%",
+        "🔄 Buscando emails [███▒▒▒▒▒▒▒] 30%",
+        "🔄 Buscando emails [████▒▒▒▒▒▒] 40%",
+        "🔄 Buscando emails [█████▒▒▒▒▒] 50%",
+        "🔄 Buscando emails [██████▒▒▒▒] 60%",
+        "🔄 Buscando emails [███████▒▒▒] 70%",
+        "🔄 Buscando emails [████████▒▒] 80%",
+        "🔄 Buscando emails [█████████▒] 90%",
+        "🔄 Buscando emails [██████████] 100%",
+    ]
+    for stage in stages:
+        await interaction.edit_original_response(content=stage)
+        await asyncio.sleep(1)
 
-        view = AcaoView(evento_id)
-        embed = await gerar_embed(evento_id)
-        await interaction.response.send_message(embed=embed, view=view)
+# Comando principal /emailfinder
+@bot.tree.command(name="emailfinder", description="Realiza busca de emails associados a um domínio")
+async def emailfinder(interaction: discord.Interaction, domain: str):
+    if bot.is_processing:
+        await interaction.response.send_message("O bot está processando um comando. Por favor, aguarde.", ephemeral=True)
+        return
 
-# Gera embed estilo painel de presença
-async def gerar_embed(evento_id):
-    evento = eventos[evento_id]
+    bot.is_processing = True  # Ativa o bloqueio
 
-    if evento.get("finalizado", False):
-        status_texto = "⛔ Finalizado"
-        cor_embed = discord.Color.dark_grey()
-    elif len(evento['participantes']) >= evento['quantidade']:
-        status_texto = "🔴 Cheio"
-        cor_embed = discord.Color.red()
-    elif len(evento['participantes']) >= evento['quantidade'] * 0.7:
-        status_texto = "🟡 Quase cheio"
-        cor_embed = discord.Color.gold()
-    else:
-        status_texto = "🟢 Aberto"
-        cor_embed = discord.Color.green()
+    try:
+        await interaction.response.defer()
+        await loading_bar(interaction)
 
-    embed = discord.Embed(
-        title=f"📌 Ação: {evento['nome']}",
-        description=f"Status: {status_texto}\nClique nos botões abaixo!",
-        color=cor_embed
-    )
+        # Executa o comando emailfinder e captura o resultado
+        result = subprocess.run(['emailfinder', '-d', domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    # Tenta buscar o avatar do autor
-    autor = bot.get_user(evento['autor_id'])
-    if autor:
-        embed.set_thumbnail(url=autor.display_avatar.url)
+        if result.returncode == 0:
+            emails = re.findall(r'[\w\.-]+@[\w\.-]+', result.stdout)
+            filtered_emails = filter_emails(emails)
 
-    embed.add_field(name="📅 Data", value=evento['data'], inline=True)
-    embed.add_field(name="⏰ Hora", value=evento['hora'], inline=True)
-    embed.add_field(
-        name="👥 Vagas", value=f"{len(evento['participantes'])}/{evento['quantidade']}", inline=True)
-    embed.add_field(name="📝 Responsável",
-                    value=f"{evento['autor_name']}", inline=False)
+            if filtered_emails:
+                total_emails = len(filtered_emails)
+                email_list_message = '\n'.join(filtered_emails)
+                final_message = f'**Total de emails encontrados (filtrados): {total_emails}**'
 
-    def formatar_lista(usuarios, emoji):
-        lista = " ".join([f"{emoji}{u.display_name}" for u in usuarios[:20]])
-        if len(usuarios) > 20:
-            lista += f" +{len(usuarios)-20}..."
-        return lista or "Nenhum"
+                if len(email_list_message) > 2000:
+                    file = io.StringIO(email_list_message)
+                    await interaction.edit_original_response(content=f'{final_message}\nOs emails foram enviados em um arquivo.', allowed_mentions=discord.AllowedMentions.none())
+                    await interaction.followup.send(file=discord.File(file, filename='emails.txt'))
+                else:
+                    await interaction.edit_original_response(content=f'{final_message}\n{email_list_message}')
+            else:
+                await interaction.edit_original_response(content='Nenhum email válido encontrado.')
+        else:
+            await interaction.edit_original_response(content=f'Erro ao executar a busca: {result.stderr}')
+    
+    except Exception as e:
+        await interaction.edit_original_response(content=f'Ocorreu um erro ao executar a busca: {str(e)}')
 
-    embed.add_field(name="✅ Participantes", value=formatar_lista(
-        evento['participantes'], "🟢 "), inline=False)
-    embed.add_field(name="⏳ Reservas", value=formatar_lista(
-        evento['reservas'], "🟡 "), inline=False)
-
-    return embed
-
-# View com botões funcionais
-class AcaoView(View):
-    def __init__(self, evento_id):
-        super().__init__(timeout=None)
-        self.evento_id = evento_id
-
-        self.participar_button = Button(
-            label="Participar", style=discord.ButtonStyle.green)
-        self.participar_button.callback = self.participar
-        self.add_item(self.participar_button)
-
-        self.sair_button = Button(
-            label="Sair da Ação", style=discord.ButtonStyle.red)
-        self.sair_button.callback = self.sair
-        self.add_item(self.sair_button)
-
-        self.reservar_button = Button(
-            label="Reservar", style=discord.ButtonStyle.blurple)
-        self.reservar_button.callback = self.reservar
-        self.add_item(self.reservar_button)
-
-        self.finalizar_button = Button(
-            label="Finalizar Ação", style=discord.ButtonStyle.gray)
-        self.finalizar_button.callback = self.finalizar
-        self.add_item(self.finalizar_button)
-
-    async def participar(self, interaction: discord.Interaction):
-        evento = eventos[self.evento_id]
-        if evento.get("finalizado", False):
-            await interaction.response.send_message("Esta ação já foi finalizada!", ephemeral=True)
-            return
-
-        usuario = interaction.user
-        if usuario.id in [u.id for u in evento['participantes']]:
-            await interaction.response.send_message("Você já está participando!", ephemeral=True)
-            return
-
-        if len(evento['participantes']) >= evento['quantidade']:
-            await interaction.response.send_message("A ação está cheia! Use o botão Reservar.", ephemeral=True)
-            return
-
-        evento['participantes'].append(usuario)
-        if usuario in evento['reservas']:
-            evento['reservas'].remove(usuario)
-        await self.atualizar_embed(interaction)
-        await interaction.response.send_message(f"Você entrou na ação **{evento['nome']}**!", ephemeral=True)
-
-    async def sair(self, interaction: discord.Interaction):
-        evento = eventos[self.evento_id]
-        usuario = interaction.user
-        if usuario.id not in [u.id for u in evento['participantes']]:
-            await interaction.response.send_message("Você não está participando desta ação.", ephemeral=True)
-            return
-
-        evento['participantes'] = [
-            u for u in evento['participantes'] if u.id != usuario.id]
-
-        if evento['reservas']:
-            novo_participante = evento['reservas'].pop(0)
-            evento['participantes'].append(novo_participante)
-            try:
-                await novo_participante.send(f"Você foi promovido de reserva para participante na ação **{evento['nome']}**!")
-            except discord.Forbidden:
-                pass
-
-        await self.atualizar_embed(interaction)
-        await interaction.response.send_message("Você saiu da ação.", ephemeral=True)
-
-    async def reservar(self, interaction: discord.Interaction):
-        evento = eventos[self.evento_id]
-        usuario = interaction.user
-        if usuario in evento['participantes']:
-            await interaction.response.send_message("Você já está participando da ação!", ephemeral=True)
-            return
-        if usuario in evento['reservas']:
-            await interaction.response.send_message("Você já está na lista de reservas!", ephemeral=True)
-            return
-        if len(evento['participantes']) < evento['quantidade']:
-            await interaction.response.send_message("Ainda há vagas! Use o botão Participar.", ephemeral=True)
-            return
-
-        evento['reservas'].append(usuario)
-        await self.atualizar_embed(interaction)
-        await interaction.response.send_message("Você entrou na lista de reservas.", ephemeral=True)
-
-    async def finalizar(self, interaction: discord.Interaction):
-        evento = eventos[self.evento_id]
-        if interaction.user.id != evento['autor_id']:
-            await interaction.response.send_message("Apenas o criador da ação pode finalizá-la!", ephemeral=True)
-            return
-
-        evento['finalizado'] = True
-        for item in self.children:
-            item.disabled = True
-
-        embed = await gerar_embed(self.evento_id)
-        embed.description += "\n\n⛔ Ação finalizada pelo organizador."
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    async def atualizar_embed(self, interaction):
-        embed = await gerar_embed(self.evento_id)
-        await interaction.response.edit_message(embed=embed, view=self)
-
-# Slash command GLOBAL
-@tree.command(name="acao", description="Cria uma nova ação")
-async def acao(interaction: discord.Interaction):
-    modal = CriarAcaoModal(author=interaction.user)
-    await interaction.response.send_modal(modal)
-
-@bot.event
-async def on_ready():
-    # Sincroniza os comandos globalmente
-    await bot.tree.sync()
-    print(f"Bot conectado como {bot.user}")
-    print("Comandos sincronizados globalmente!")
-
+    finally:
+        await interaction.followup.send(f"Resultados da busca para o domínio `{domain}`.", allowed_mentions=discord.AllowedMentions(users=True))  # Menciona o usuário
+        bot.is_processing = False
 # Inicialização
 bot.run(os.environ['DISCORD_TOKEN'])
+
